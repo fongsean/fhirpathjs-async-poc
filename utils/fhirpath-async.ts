@@ -1,4 +1,4 @@
-import type { CodeableConcept, Coding, OperationOutcome, OperationOutcomeIssue } from "fhir/r4b";
+import type { CodeableConcept, Coding, OperationOutcome, OperationOutcomeIssue, Reference, Resource } from "fhir/r4b";
 import fhirpath from "fhirpath";
 import { logMessage, CreateOperationOutcome } from "~/utils/create-outcome";
 
@@ -57,11 +57,35 @@ export async function evaluateFhirpathAsync(
   // https://github.com/HL7/fhirpath.js/?tab=readme-ov-file#user-defined-functions
   // https://github.com/HL7/fhirpath.js/blob/5428ef8be766301658215ef7ed241c8a1666a980/index.d.ts#L86
   const userInvocationTable: UserInvocationTable = {
+    resolve: {
+      fn: (inputs: any[]) =>
+        inputs.map((reference: string | Reference) => {
+          let key = createIndexKeyResolve(reference);
+          if (key) {
+            key = "Resolve:" + key;
+            if (asyncCallsRequired.get(key)?.evaluationCompleted) {
+              logMessage(debugAsyncFhirpath, outcome, '  using cached result for: ', key);
+              return asyncCallsRequired.get(key)?.result;
+            }
+            let details: ResolveUserData = {
+              evaluationCompleted: false,
+              asyncFunction: resolveAsync,
+              value: reference
+            };
+            asyncCallsRequired.set(key, details);
+            logMessage(debugAsyncFhirpath, outcome, '  requires async evaluation for: ', key);
+            requiresAsyncProcessing = true;
+          }
+          return undefined;
+        }),
+      arity: { 0: [] },
+    },
     memberOf: {
       fn: (inputs: any[], valueSet: string) =>
         inputs.map((codeData: string | Coding | CodeableConcept) => {
-          const key = createIndexKeyMemberOf(codeData, valueSet);
+          let key = createIndexKeyMemberOf(codeData, valueSet);
           if (key) {
+            key = "MemberOf:" + key;
             if (asyncCallsRequired.get(key)?.evaluationCompleted) {
               logMessage(debugAsyncFhirpath, outcome, '  using cached result for: ', key);
               return asyncCallsRequired.get(key)?.result;
@@ -134,9 +158,43 @@ interface AsyncFunctionUserData {
   result?: any;
 }
 
+// --------------------------------------------------------------------------
+// The following section is the custom function for resolve()
+// --------------------------------------------------------------------------
+interface ResolveUserData extends AsyncFunctionUserData {
+  value: string | Reference;
+}
+
+/**
+ * Create an Index Key for the memberOf function
+ * @param value 
+ * @returns 
+ */
+function createIndexKeyResolve(value: string | Reference): string | undefined {
+  if (typeof value === "string") 
+    return value;
+  if (value as Reference)
+    return (value as Reference).reference;
+  return value;
+}
+
+/**
+ * Perform the actual async member of evaluation
+ * @param details parameters which is actually a MemberOfUserData structure
+ */
+async function resolveAsync(details: AsyncFunctionUserData): Promise<void> {
+  // perform the async call to check for the memberOf status
+  let typedData = details as ResolveUserData;
+  details.evaluationCompleted = true;
+  if (typedData.value === "http://hl7.org/fhir/ValueSet/observation-vitalsignresult")
+    details.result = { resourceType: "Organization", id: "1234" };
+  else
+    details.result = undefined; // not found!
+}
+
 
 // --------------------------------------------------------------------------
-// The following section is the custom function for memberOf
+// The following section is the custom function for memberOf()
 // --------------------------------------------------------------------------
 interface MemberOfUserData extends AsyncFunctionUserData {
   value: string | Coding | CodeableConcept;
