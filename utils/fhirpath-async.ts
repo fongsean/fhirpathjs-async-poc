@@ -22,38 +22,54 @@ import { logMessage, CreateOperationOutcome } from "~/utils/create-outcome";
 // otherwise, repeat the process until all async calls are resolved.
 // --------------------------------------------------------------------------
 
-
+/** Global debug variable to permit the logger to write information messages
+    to the OperationOutcome and console
+*/
 export var debugAsyncFhirpath: boolean = true;
 
+/**
+ * Evaluate a FHIRPath expression asynchronously
+ * @param fhirData FHIR resource to run the FHIRPath expression against
+ * @param path FHIRPath expression to evaluate (string or Path object)
+ * @param context Environment to evaluate the expression in, mostly variables
+ * @param model which fhir version to use (r4/r4b/r5)
+ * @returns the result of the evaluation
+ */
 export async function evaluateFhirpathAsync(
   fhirData: fhir4b.DomainResource,
   path: string | Path,
   context?: Context,
   model?: Model,
 ): Promise<any[]> {
-  var results = [];
-  var debug = false;
-  var outcome: OperationOutcome = {
+  let results = [];
+  let debug = false;
+  let outcome: OperationOutcome = {
     resourceType: "OperationOutcome",
     issue: []
   }
 
-  var memberOfCallsRequired: Map<string, boolean | undefined> = new Map<string, boolean>();
-  var requiresAsyncProcessing = false;
+  let asyncCallsRequired: Map<string, AsyncFunctionUserData> = new Map<string, AsyncFunctionUserData>();
+  let requiresAsyncProcessing = false;
   // introduce a custom function for resolve into the options
   // https://github.com/HL7/fhirpath.js/?tab=readme-ov-file#user-defined-functions
   // https://github.com/HL7/fhirpath.js/blob/5428ef8be766301658215ef7ed241c8a1666a980/index.d.ts#L86
   const userInvocationTable: UserInvocationTable = {
     memberOf: {
-      fn: (inputs: any[], valueset: string) =>
+      fn: (inputs: any[], valueSet: string) =>
         inputs.map((codeData: string | Coding | CodeableConcept) => {
-          const key = createIndexKeyMemberOf(codeData, valueset);
+          const key = createIndexKeyMemberOf(codeData, valueSet);
           if (key) {
-            if (memberOfCallsRequired.has(key) && memberOfCallsRequired.get(key) !== undefined) {
+            if (asyncCallsRequired.get(key)?.evaluationCompleted) {
               logMessage(debugAsyncFhirpath, outcome, '  using cached result for: ', key);
-              return memberOfCallsRequired.get(key);
+              return asyncCallsRequired.get(key)?.result;
             }
-            memberOfCallsRequired.set(key, undefined);
+            let details: MemberOfUserData = {
+              evaluationCompleted: false,
+              asyncFunction: memberOfAsync,
+              value: codeData,
+              valueSet: valueSet,
+            };
+            asyncCallsRequired.set(key, details);
             logMessage(debugAsyncFhirpath, outcome, '  requires async evaluation for: ', key);
             requiresAsyncProcessing = true;
           }
@@ -71,16 +87,14 @@ export async function evaluateFhirpathAsync(
   do {
     iterations++;
     // Perform the async calls required (none first time in)
-    if (memberOfCallsRequired.size > 0) {
+    if (asyncCallsRequired.size > 0) {
       // resolve the async calls
-      for (let key of memberOfCallsRequired.keys()) {
-        if (memberOfCallsRequired.get(key) === undefined) {
+      for (let key of asyncCallsRequired.keys()) {
+        let details = asyncCallsRequired.get(key);
+        if (!details?.evaluationCompleted) {
           // perform the async call to check for the memberOf status
           logMessage(debugAsyncFhirpath, outcome, "  performing async request for: ", key);
-          if (key === "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus|M - http://hl7.org/fhir/ValueSet/observation-vitalsignresult")
-            memberOfCallsRequired.set(key, true);
-          else
-            memberOfCallsRequired.set(key, false);
+          await details?.asyncFunction(details);
         }
       }
       requiresAsyncProcessing = false;
@@ -113,11 +127,17 @@ export async function evaluateFhirpathAsync(
 
 interface AsyncFunctionUserData {
   evaluationCompleted: boolean;
+  asyncFunction: (details: AsyncFunctionUserData) => Promise<void>;
   result?: any;
 }
+
+
+// --------------------------------------------------------------------------
+// The following section is the custom function for memberOf
+// --------------------------------------------------------------------------
 interface MemberOfUserData extends AsyncFunctionUserData {
   value: string | Coding | CodeableConcept;
-  valueset: string;
+  valueSet: string;
 }
 
 /**
@@ -142,7 +162,16 @@ function createIndexKeyMemberOf(value: string | Coding | CodeableConcept, values
   return undefined;
 }
 
-async function memberOfAsync(value: string | Coding | CodeableConcept, valueset: string): Promise<boolean> {
+/**
+ * Perform the actual async member of evaluation
+ * @param details parameters which is actually a MemberOfUserData structure
+ */
+async function memberOfAsync(details: AsyncFunctionUserData): Promise<void> {
   // perform the async call to check for the memberOf status
-  return true;
+  let typedData = details as MemberOfUserData;
+  details.evaluationCompleted = true;
+  if (typedData.valueSet === "http://hl7.org/fhir/ValueSet/observation-vitalsignresult")
+    details.result = true;
+  else
+    details.result = false;
 }
