@@ -21,6 +21,9 @@ import { logMessage, CreateOperationOutcome } from "~/utils/create-outcome";
 // If there were no additional async methods encountered, return the result.
 // otherwise, repeat the process until all async calls are resolved.
 // --------------------------------------------------------------------------
+// Open question: Should the async requests have access to the other potential results?
+// Reason: That would enable the result from one function to be accessed in another function.
+// --------------------------------------------------------------------------
 
 /** Global debug variable to permit the logger to write information messages
     to the OperationOutcome and console
