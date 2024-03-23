@@ -152,13 +152,14 @@
 import { ref, onMounted } from "vue";
 import { evaluateFhirpathAsync } from "~/utils/fhirpath-async";
 import type { } from "fhir/r4b";
+import fhirpath_r4_model from "fhirpath/fhir-context/r4";
 
 // reactive state
 const count = ref(0);
 
 const processedByEngine = ref("demo app");
 
-const results = ref([]);
+const results = ref<any[]>([]);
 
 const resourceJson = ref(JSON.stringify({
     resourceType: "Patient",
@@ -174,10 +175,15 @@ const resourceJson = ref(JSON.stringify({
           code: "M",
           display: "Married",
         },
+        {
+          system: "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus",
+          code: "W",
+          display: "Widowed",
+        }
       ],
     },
   }));
-const expression = ref("Patient.name.given | maritalStatus | maritalStatus.coding.memberOf('http://hl7.org/fhir/ValueSet/observation-vitalsignresult')");
+const expression = ref("maritalStatus | maritalStatus.coding.memberOf('http://hl7.org/fhir/ValueSet/observation-vitalsignresult')| maritalStatus.coding.memberOf('http://hl7.org/fhir/ValueSet/observation-vitalsignresult2')");
 
 // functions that mutate state and trigger updates
 function increment() {
@@ -199,9 +205,18 @@ async function evaluateExpression() {
     }
   }
 
+    // run the actual fhirpath engine
+    var context: Record<string, any> = {
+    resource: fhirData,
+    rootResource: fhirData,
+  };
+
+
   let result = await evaluateFhirpathAsync(
     fhirData,
-    expression.value
+    expression.value,
+    context,
+    fhirpath_r4_model
   );
   console.log(result);
   results.value = result;

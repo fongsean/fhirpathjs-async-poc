@@ -1,8 +1,6 @@
-import type { CodeableConcept, Coding } from "fhir/r4b";
+import type { CodeableConcept, Coding, OperationOutcome, OperationOutcomeIssue } from "fhir/r4b";
 import fhirpath from "fhirpath";
-// import { Coding, OperationOutcomeIssue } from "fhir/r4b";
-import fhirpath_r4_model from "fhirpath/fhir-context/r4";
-import { CreateOperationOutcome } from "~/utils/create-outcome";
+import { logMessage, CreateOperationOutcome } from "~/utils/create-outcome";
 
 // --------------------------------------------------------------------------
 // The concept of this POC is to demonstrate an approach to perform some
@@ -24,32 +22,22 @@ import { CreateOperationOutcome } from "~/utils/create-outcome";
 // otherwise, repeat the process until all async calls are resolved.
 // --------------------------------------------------------------------------
 
-function createIndexKey(value: string | Coding | CodeableConcept, valueset: string): string | undefined {
-  if (typeof value === "string") {
-    return value + " - " + valueset;
-  }
-  if (value.code) {
-    return value.system + "|" + value.code + " - " + valueset;
-  }
-  if (value.coding) {
-    return value.coding[0].system + "|" + value.coding[0].code + " - " + valueset;
-  }
-  return undefined;
-}
+
+export var debugAsyncFhirpath: boolean = true;
 
 export async function evaluateFhirpathAsync(
   fhirData: fhir4b.DomainResource,
-  expression: string
+  path: string | Path,
+  context?: Context,
+  model?: Model,
 ): Promise<any[]> {
   var results = [];
+  var debug = false;
+  var outcome: OperationOutcome = {
+    resourceType: "OperationOutcome",
+    issue: []
+  }
 
-  // run the actual fhirpath engine
-  var environment: Record<string, any> = {
-    resource: fhirData,
-    rootResource: fhirData,
-  };
-
-  let iterations = 0;
   var memberOfCallsRequired: Map<string, boolean | undefined> = new Map<string, boolean>();
   var requiresAsyncProcessing = false;
   // introduce a custom function for resolve into the options
@@ -59,14 +47,14 @@ export async function evaluateFhirpathAsync(
     memberOf: {
       fn: (inputs: any[], valueset: string) =>
         inputs.map((codeData: string | Coding | CodeableConcept) => {
-          const key = createIndexKey(codeData, valueset);
-          if (key){
+          const key = createIndexKeyMemberOf(codeData, valueset);
+          if (key) {
             if (memberOfCallsRequired.has(key) && memberOfCallsRequired.get(key) !== undefined) {
-              console.log('  using cached result for: ', key);
+              logMessage(debugAsyncFhirpath, outcome, '  using cached result for: ', key);
               return memberOfCallsRequired.get(key);
             }
             memberOfCallsRequired.set(key, undefined);
-            console.log('  requires evaluation for: ', key);
+            logMessage(debugAsyncFhirpath, outcome, '  requires async evaluation for: ', key);
             requiresAsyncProcessing = true;
           }
           return undefined;
@@ -79,15 +67,16 @@ export async function evaluateFhirpathAsync(
     userInvocationTable: userInvocationTable,
   };
 
+  let iterations = 0;
   do {
     iterations++;
     // Perform the async calls required (none first time in)
     if (memberOfCallsRequired.size > 0) {
       // resolve the async calls
       for (let key of memberOfCallsRequired.keys()) {
-        if (memberOfCallsRequired.get(key) === undefined){
+        if (memberOfCallsRequired.get(key) === undefined) {
           // perform the async call to check for the memberOf status
-          console.log("  performing async request for: ", key);
+          logMessage(debugAsyncFhirpath, outcome, "  performing async request for: ", key);
           if (key === "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus|M - http://hl7.org/fhir/ValueSet/observation-vitalsignresult")
             memberOfCallsRequired.set(key, true);
           else
@@ -98,16 +87,15 @@ export async function evaluateFhirpathAsync(
     }
 
     // Evaluate the expression
-    console.log("performing iteration: ", iterations)
+    logMessage(debugAsyncFhirpath, outcome, "performing iteration: ", iterations)
     try {
       results = fhirpath.evaluate(
         fhirData,
-        expression,
-        environment,
-        fhirpath_r4_model,
+        path,
+        context,
+        model,
         options
       );
-      console.log("memberOf Calls Required: ", memberOfCallsRequired);
     } catch (err: any) {
       console.log(err);
       if (err.message) {
@@ -117,7 +105,44 @@ export async function evaluateFhirpathAsync(
 
   } while (requiresAsyncProcessing && iterations < 10); // bound the number of iterations
   if (iterations > 1) {
-    console.log("iterations", iterations);
+    logMessage(debugAsyncFhirpath, outcome, "total iterations", iterations);
   }
+  console.log(outcome);
   return results;
+}
+
+interface AsyncFunctionUserData {
+  evaluationCompleted: boolean;
+  result?: any;
+}
+interface MemberOfUserData extends AsyncFunctionUserData {
+  value: string | Coding | CodeableConcept;
+  valueset: string;
+}
+
+/**
+ * Create an Index Key for the memberOf function
+ * @param value 
+ * @param valueset 
+ * @returns 
+ */
+function createIndexKeyMemberOf(value: string | Coding | CodeableConcept, valueset: string): string | undefined {
+  if (typeof value === "string") {
+    return value + " - " + valueset;
+  }
+  let coding = value as Coding;
+  if (coding.code) {
+    return coding.system + "|" + coding.code + " - " + valueset;
+  }
+  let cc = value as CodeableConcept;
+  if (cc.coding) {
+    // return the same as for coding by joining each of the codings with a comma
+    return cc.coding.map((c) => c.system + "|" + c.code).join(",") + " - " + valueset;
+  }
+  return undefined;
+}
+
+async function memberOfAsync(value: string | Coding | CodeableConcept, valueset: string): Promise<boolean> {
+  // perform the async call to check for the memberOf status
+  return true;
 }
