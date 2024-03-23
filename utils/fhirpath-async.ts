@@ -24,37 +24,26 @@ import { CreateOperationOutcome } from "~/utils/create-outcome";
 // otherwise, repeat the process until all async calls are resolved.
 // --------------------------------------------------------------------------
 
-function createIndexKey(value: string | Coding | CodeableConcept) {
+function createIndexKey(value: string | Coding | CodeableConcept, valueset: string): string | undefined {
   if (typeof value === "string") {
-    return value;
+    return value + " - " + valueset;
   }
   if (value.code) {
-    return value.system + "|" + value.code;
+    return value.system + "|" + value.code + " - " + valueset;
   }
   if (value.coding) {
-    return value.coding[0].system + "|" + value.coding[0].code;
+    return value.coding[0].system + "|" + value.coding[0].code + " - " + valueset;
   }
-  return "";
+  return undefined;
 }
 
 export async function evaluateFhirpathAsync(
-  resourceJson: string,
+  fhirData: fhir4b.DomainResource,
   expression: string
 ): Promise<any[]> {
   var results = [];
 
   // run the actual fhirpath engine
-  let fhirData: fhir4b.DomainResource = { resourceType: "Patient" }; // some dummy data
-  if (resourceJson) {
-    try {
-      fhirData = JSON.parse(resourceJson);
-    } catch (err: any) {
-      console.log(err);
-      if (err.message) {
-        throw CreateOperationOutcome("fatal", "exception", err.message);
-      }
-    }
-  }
   var environment: Record<string, any> = {
     resource: fhirData,
     rootResource: fhirData,
@@ -69,15 +58,17 @@ export async function evaluateFhirpathAsync(
   const userInvocationTable: UserInvocationTable = {
     memberOf: {
       fn: (inputs: any[], valueset: string) =>
-        inputs.map((i: string | Coding | CodeableConcept) => {
-          const key = createIndexKey(i) + " - " + valueset;
-          if (memberOfCallsRequired.has(key) && memberOfCallsRequired.get(key) !== undefined) {
-            console.log('  using cached result for: ', key);
-            return memberOfCallsRequired.get(key);
+        inputs.map((codeData: string | Coding | CodeableConcept) => {
+          const key = createIndexKey(codeData, valueset);
+          if (key){
+            if (memberOfCallsRequired.has(key) && memberOfCallsRequired.get(key) !== undefined) {
+              console.log('  using cached result for: ', key);
+              return memberOfCallsRequired.get(key);
+            }
+            memberOfCallsRequired.set(key, undefined);
+            console.log('  requires evaluation for: ', key);
+            requiresAsyncProcessing = true;
           }
-          memberOfCallsRequired.set(key, undefined);
-          console.log('  requires evaluation for: ', key);
-          requiresAsyncProcessing = true;
           return undefined;
         }),
       arity: { 1: ["String"] },
@@ -97,7 +88,10 @@ export async function evaluateFhirpathAsync(
         if (memberOfCallsRequired.get(key) === undefined){
           // perform the async call to check for the memberOf status
           console.log("  performing async request for: ", key);
-          memberOfCallsRequired.set(key, true);
+          if (key === "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus|M - http://hl7.org/fhir/ValueSet/observation-vitalsignresult")
+            memberOfCallsRequired.set(key, true);
+          else
+            memberOfCallsRequired.set(key, false);
         }
       }
       requiresAsyncProcessing = false;
