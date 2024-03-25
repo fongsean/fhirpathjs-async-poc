@@ -1,5 +1,5 @@
 {
-  "name": "nuxt-app",
+  "name": "fhirpath-async-poc",
   "private": true,
   "scripts": {
     "build": "nuxt build",
