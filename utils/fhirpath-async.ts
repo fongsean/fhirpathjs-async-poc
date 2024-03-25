@@ -1,6 +1,6 @@
-import type { CodeableConcept, Coding, OperationOutcome, OperationOutcomeIssue, Reference, Resource } from "fhir/r4b";
+import type { CodeableConcept, Coding, OperationOutcome, OperationOutcomeIssue, Reference, Resource, Parameters } from "fhir/r4b";
 import fhirpath from "fhirpath";
-import { logMessage, CreateOperationOutcome } from "~/utils/create-outcome";
+import { logMessage, CreateOperationOutcome } from "~/utils/outcome-utils";
 
 // --------------------------------------------------------------------------
 // The concept of this POC is to demonstrate an approach to perform some
@@ -77,12 +77,13 @@ export async function evaluateFhirpathAsync(
             requiresAsyncProcessing = true;
           }
           return undefined;
-        }),
+        })
+        .filter((v) => v !== undefined),
       arity: { 0: [] },
     },
     memberOf: {
-      fn: (inputs: any[], valueSet: string) =>
-        inputs.map((codeData: string | Coding | CodeableConcept) => {
+      fn: (inputs: any[], valueSet: string) => { 
+        let output = inputs.map((codeData: string | Coding | CodeableConcept) => {
           let key = createIndexKeyMemberOf(codeData, valueSet);
           if (key) {
             key = "MemberOf:" + key;
@@ -101,7 +102,10 @@ export async function evaluateFhirpathAsync(
             requiresAsyncProcessing = true;
           }
           return undefined;
-        }),
+        })
+        .filter((v) => v !== undefined);
+        return output;
+      },
       arity: { 1: ["String"] },
     },
   };
@@ -116,14 +120,17 @@ export async function evaluateFhirpathAsync(
     // Perform the async calls required (none first time in)
     if (asyncCallsRequired.size > 0) {
       // resolve the async calls
+      let asyncPromises: Promise<void>[] = [];
       for (let key of asyncCallsRequired.keys()) {
         let details = asyncCallsRequired.get(key);
-        if (!details?.evaluationCompleted) {
+        if (details && !details.evaluationCompleted) {
           // perform the async call to check for the memberOf status
           logMessage(debugAsyncFhirpath, outcome, "  performing async request for: ", key);
-          await details?.asyncFunction(outcome, details);
+          asyncPromises.push(details.asyncFunction(outcome, details));
         }
       }
+      if (asyncPromises.length > 0)
+        await Promise.all(asyncPromises);
       requiresAsyncProcessing = false;
     }
 
@@ -246,9 +253,76 @@ function createIndexKeyMemberOf(value: string | Coding | CodeableConcept, values
 async function memberOfAsync(outcome: OperationOutcome, details: AsyncFunctionUserData): Promise<void> {
   // perform the async call to check for the memberOf status
   let typedData = details as MemberOfUserData;
-  if (typedData.valueSet === "http://hl7.org/fhir/ValueSet/observation-vitalsignresult")
-    details.result = true;
-  else
-    details.result = false;
-  details.evaluationCompleted = true;
+
+  try {
+    const httpHeaders = {
+      "Accept": "application/fhir+json; charset=utf-8",
+    };
+    const httpPostHeaders = {
+      "Accept": "application/fhir+json; charset=utf-8",
+      "Content-Type": "application/fhir+json; charset=utf-8",
+    };
+    let myHeaders = new Headers(httpHeaders);
+
+    const requestUrl = "https://r4.ontoserver.csiro.au/fhir/ValueSet/$validate-code";
+
+    let response;
+    let cc = typedData.value as CodeableConcept;
+    if (cc.coding) {
+      const parameters: Parameters = {
+        "resourceType": "Parameters",
+        "parameter": [
+          {
+            "name": "url",
+            "valueUri": typedData.valueSet
+          },
+          {
+            "name": "codeableConcept",
+            "valueCodeableConcept": cc
+          }
+        ]
+      };
+      myHeaders = new Headers(httpPostHeaders);
+      response = await fetch(requestUrl, { method: "POST", headers: myHeaders, body: JSON.stringify(parameters) });
+    } else if (typeof typedData.value === "string") {
+      const queryParams = new URLSearchParams({
+        url: typedData.valueSet,
+        code: typedData.value,
+      });
+      response = await fetch(`${requestUrl}?${queryParams.toString()}`, { headers: myHeaders });
+    } else {
+      let coding = typedData.value as Coding;
+      if (coding.code) {
+        const queryParams = new URLSearchParams({
+          url: typedData.valueSet ?? '',
+          system: coding.system ?? '',
+          code: coding.code,
+        });
+        response = await fetch(`${requestUrl}?${queryParams.toString()}`, { headers: myHeaders });
+      }
+    }
+
+    if (response) {
+      const resultJson = await response.json();
+      console.log(resultJson);
+      let params = resultJson as Parameters;
+      if (params && params.parameter) {
+        let param = params.parameter.find((p) => p.name === "result");
+        if (param) {
+          details.evaluationCompleted = true;
+          details.result = param.valueBoolean;
+        }
+      }
+      let outcomeResult = resultJson as OperationOutcome;
+      if (outcomeResult && outcomeResult.issue) {
+        details.evaluationCompleted = true;
+        throw outcomeResult; // should we be throwing here?
+      }
+    }
+  } catch (err) {
+    console.log(err);
+    details.evaluationCompleted = true;
+    const key = createIndexKeyMemberOf(typedData.value, typedData.valueSet);
+    throw CreateOperationOutcome("error", "exception", "Failed to check membership: " + key, undefined, err.message);
+  }  
 }
