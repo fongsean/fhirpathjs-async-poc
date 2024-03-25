@@ -121,7 +121,7 @@ export async function evaluateFhirpathAsync(
         if (!details?.evaluationCompleted) {
           // perform the async call to check for the memberOf status
           logMessage(debugAsyncFhirpath, outcome, "  performing async request for: ", key);
-          await details?.asyncFunction(details);
+          await details?.asyncFunction(outcome, details);
         }
       }
       requiresAsyncProcessing = false;
@@ -154,7 +154,7 @@ export async function evaluateFhirpathAsync(
 
 interface AsyncFunctionUserData {
   evaluationCompleted: boolean;
-  asyncFunction: (details: AsyncFunctionUserData) => Promise<void>;
+  asyncFunction: (outcome: OperationOutcome, details: AsyncFunctionUserData) => Promise<void>;
   result?: any;
 }
 
@@ -171,7 +171,7 @@ interface ResolveUserData extends AsyncFunctionUserData {
  * @returns 
  */
 function createIndexKeyResolve(value: string | Reference): string | undefined {
-  if (typeof value === "string") 
+  if (typeof value === "string")
     return value;
   if (value as Reference)
     return (value as Reference).reference;
@@ -182,14 +182,30 @@ function createIndexKeyResolve(value: string | Reference): string | undefined {
  * Perform the actual async member of evaluation
  * @param details parameters which is actually a MemberOfUserData structure
  */
-async function resolveAsync(details: AsyncFunctionUserData): Promise<void> {
+async function resolveAsync(outcome: OperationOutcome, details: AsyncFunctionUserData): Promise<void> {
   // perform the async call to check for the memberOf status
   let typedData = details as ResolveUserData;
-  details.evaluationCompleted = true;
-  if (typedData.value === "http://hl7.org/fhir/ValueSet/observation-vitalsignresult")
-    details.result = { resourceType: "Organization", id: "1234" };
-  else
-    details.result = undefined; // not found!
+
+  const URL = createIndexKeyResolve(typedData.value);
+  if (URL) {
+    try {
+      const httpHeaders = {
+        "Accept": "application/fhir+json; charset=utf-8",
+      };
+      const myHeaders = new Headers(httpHeaders);
+      let response = await fetch(URL, { headers: myHeaders });
+      let resultJson = await response.json();
+      console.log(resultJson);
+      details.result = resultJson;
+      details.evaluationCompleted = true;
+    } catch (err) {
+      console.log(err);
+      details.result = undefined; // not found!
+      details.evaluationCompleted = true;
+      let newOutcome = CreateOperationOutcome("error", "exception", "Failed to resolve reference: " + URL, undefined, err.message);
+      throw newOutcome;
+    }
+  }
 }
 
 
@@ -227,12 +243,12 @@ function createIndexKeyMemberOf(value: string | Coding | CodeableConcept, values
  * Perform the actual async member of evaluation
  * @param details parameters which is actually a MemberOfUserData structure
  */
-async function memberOfAsync(details: AsyncFunctionUserData): Promise<void> {
+async function memberOfAsync(outcome: OperationOutcome, details: AsyncFunctionUserData): Promise<void> {
   // perform the async call to check for the memberOf status
   let typedData = details as MemberOfUserData;
-  details.evaluationCompleted = true;
   if (typedData.valueSet === "http://hl7.org/fhir/ValueSet/observation-vitalsignresult")
     details.result = true;
   else
     details.result = false;
+  details.evaluationCompleted = true;
 }
