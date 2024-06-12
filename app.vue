@@ -76,32 +76,50 @@ const outcome = ref<OperationOutcome>({
 });
 const resourceJson = ref(
     JSON.stringify(
+        // {
+        //   resourceType: "Patient",
+        //   name: [
+        //     {
+        //       given: ["John", "Doe"],
+        //     },
+        //   ],
+        //   birthDate: "1970-01-01",
+        //   managingOrganization: {
+        //     reference:
+        //         "https://sqlonfhir-r4.azurewebsites.net/fhir/Organization/example",
+        //   },
+        //   maritalStatus: {
+        //     coding: [
+        //       {
+        //         system: "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus",
+        //         code: "M",
+        //         display: "Married",
+        //       },
+        //       {
+        //         system: "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus",
+        //         code: "W",
+        //         display: "Widowed",
+        //       },
+        //     ],
+        //   },
+        // },
         {
-          resourceType: "Patient",
-          name: [
-            {
-              given: ["John", "Doe"],
-            },
-          ],
-          birthDate: "1970-01-01",
-          managingOrganization: {
-            reference:
-                "https://sqlonfhir-r4.azurewebsites.net/fhir/Organization/example",
-          },
-          maritalStatus: {
-            coding: [
+          resourceType: "ValueSet",
+          status: "draft",
+          compose: {
+            include: [
               {
-                system: "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus",
-                code: "M",
-                display: "Married",
-              },
-              {
-                system: "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus",
-                code: "W",
-                display: "Widowed",
-              },
-            ],
-          },
+                system: "http://snomed.info/sct",
+                filter: [
+                  {
+                    property: "constraint",
+                    op: "=",
+                    value: "<<52221007.<<363704007|Site|"
+                  }
+                ]
+              }
+            ]
+          }
         },
         null,
         2
@@ -110,8 +128,11 @@ const resourceJson = ref(
 // const expression = ref(
 //     "managingOrganization.resolve().select(name|alias)\n| maritalStatus.memberOf('http://hl7.org/fhir/ValueSet/observation-vitalsignresult')\n| maritalStatus.coding.memberOf('http://hl7.org/fhir/ValueSet/marital-status')\n| birthDate.expand('https://healthterminologies.gov.au/fhir/ValueSet/australian-states-territories-2')"
 // );
+// const expression = ref(
+//     "expand('https://healthterminologies.gov.au/fhir/ValueSet/australian-states-territories-2').expansion.contains"
+// );
 const expression = ref(
-    "expand('https://healthterminologies.gov.au/fhir/ValueSet/australian-states-territories-2').expansion.contains"
+    "expand(%resource).expansion.contains"
 );
 
 // functions that mutate state and trigger updates
@@ -139,6 +160,7 @@ async function evaluateExpression() {
   };
 
   try {
+    console.log(context)
     let result = await evaluateFhirpathAsync(
         fhirData,
         expression.value,

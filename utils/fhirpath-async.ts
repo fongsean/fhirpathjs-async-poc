@@ -75,8 +75,12 @@ export async function evaluateFhirpathAsync(
       arity: { 0: [] },
     },
     expand: {
-      fn: (inputs: any[], valueSet: string, params?: string) =>
+      fn: (inputs: any[], valueSet: string | ValueSet | Resource[], params?: string) =>
         inputs.map((value: any) => {
+          if (Array.isArray(valueSet)) {
+            valueSet = valueSet[0] as ValueSet;
+          }
+
           let key = createIndexKeyExpand(valueSet, params);
           if (key) {
             key = "Expand:" + key;
@@ -100,7 +104,7 @@ export async function evaluateFhirpathAsync(
           }
         })
           .filter((v) => v !== undefined),
-      arity: { 1: ["String"], 2: ["String", "String"] },
+      arity: { 1: ["Any"], 2: ["Any", "String"] },
     },
     resolve: {
       fn: (inputs: any[]) =>
@@ -161,6 +165,7 @@ export async function evaluateFhirpathAsync(
 
   let iterations = 0;
   do {
+    context = { ...context, "resource": fhirData, "rootResource": fhirData };
     iterations++;
     // Perform the async calls required (none first time in)
     if (asyncCallsRequired.size > 0) {
@@ -216,20 +221,29 @@ interface AsyncFunctionUserData {
 // --------------------------------------------------------------------------
 interface ExpandUserData extends AsyncFunctionUserData {
   value: any;
-  valueSet: string;
+  valueSet: string | ValueSet;
   params?: string;
 }
 
 /**
  * Create an Index Key for the expand function
- * @param valueset
+ * @param valueSet
  * @param params
  * @returns
  */
-function createIndexKeyExpand(valueSet: string, params?: string): string | undefined {
+function createIndexKeyExpand(valueSet: string | ValueSet, params?: string): string | undefined {
   // input value is ignored since expand() is supposed to be called with a %terminologies fhirpath object
+  const vs = valueSet as ValueSet;
+  if (vs.resourceType === "ValueSet") {
+    const valueSetId = vs.id ?? vs.url ?? ''
+    return params ? " terminologies - " + valueSetId + " - " + params : "terminologies - " + valueSetId;
+  }
 
-  return params ? " terminologies - " + valueSet + " - " + params : "terminologies - " + valueSet;
+  if (typeof valueSet === "string") {
+    return params ? " terminologies - " + valueSet + " - " + params : "terminologies - " + valueSet;
+  }
+
+  return undefined
 }
 
 
@@ -245,14 +259,35 @@ async function expandAsync(outcome: OperationOutcome, details: AsyncFunctionUser
     const httpHeaders = {
       "Accept": "application/fhir+json; charset=utf-8",
     };
+    const httpPostHeaders = {
+      "Accept": "application/fhir+json; charset=utf-8",
+      "Content-Type": "application/fhir+json; charset=utf-8",
+    };
     let myHeaders = new Headers(httpHeaders);
 
     const requestUrl = "https://r4.ontoserver.csiro.au/fhir/ValueSet/$expand";
 
     let response;
+    let valueSet = typedData.valueSet as ValueSet;
+    if (valueSet.resourceType === "ValueSet") {
+      const parameters: Parameters = {
+        resourceType: "Parameters",
+        parameter: [
+          {
+            "name": "valueSet",
+            "resource": valueSet
+          },
+        ]
+      };
 
-    const additionalParams = typedData.params ?? ""
-    response = await fetch(`${requestUrl}?url=${typedData.valueSet}&${additionalParams}`, { headers: myHeaders });
+      // TODO turn typedData.params into a URLSearchParams object and into $expand params
+
+      myHeaders = new Headers(httpPostHeaders);
+      response = await fetch(requestUrl, { method: "POST", headers: myHeaders, body: JSON.stringify(parameters) });
+    } else if (typeof typedData.valueSet === "string") {
+      const additionalParams = typedData.params ?? ""
+      response = await fetch(`${requestUrl}?url=${typedData.valueSet}&${additionalParams}`, { headers: myHeaders });
+    }
 
     if (response) {
       const resultJson = await response.json();
