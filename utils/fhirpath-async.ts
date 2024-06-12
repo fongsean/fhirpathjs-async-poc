@@ -5,7 +5,8 @@ import type {
   OperationOutcomeIssue,
   Reference,
   Resource,
-  Parameters
+  Parameters,
+  ValueSet
 } from "fhir/r4b";
 import type { UserInvocationTable } from "fhirpath";
 import fhirpath from "fhirpath";
@@ -69,22 +70,37 @@ export async function evaluateFhirpathAsync(
   const userInvocationTable: UserInvocationTable = {
     toAge: {
       fn: (inputs: any[]) =>
-        inputs.map((reference: string) => {
-          let key = createIndexKeyResolve(reference);
-          if (key) {
-            key = "Resolve:" + key;
-          }
-
-
-          const ageResult = birthdateToAge(reference);
-          logMessage(debugAsyncFhirpath, outcome, ' performing toAge(): ', key);
-          return ageResult
-
-
-          return undefined;
-        })
+        inputs.map((reference: string) => birthdateToAge(reference))
           .filter((v) => v !== undefined),
       arity: { 0: [] },
+    },
+    expand: {
+      fn: (inputs: any[], valueSet: string, params?: string) =>
+        inputs.map((value: any) => {
+          let key = createIndexKeyExpand(valueSet, params);
+          if (key) {
+            key = "Expand:" + key;
+            if (asyncCallsRequired.get(key)?.evaluationCompleted) {
+              logMessage(debugAsyncFhirpath, outcome, '  using cached result for: ', key);
+              return asyncCallsRequired.get(key)?.result;
+            }
+
+            let details: ExpandUserData = {
+              evaluationCompleted: false,
+              asyncFunction: expandAsync,
+              value: value,
+              valueSet: valueSet,
+              params: params
+            };
+            asyncCallsRequired.set(key, details);
+            logMessage(debugAsyncFhirpath, outcome, '  requires async evaluation for: ', key);
+            requiresAsyncProcessing = true;
+
+            return undefined;
+          }
+        })
+          .filter((v) => v !== undefined),
+      arity: { 1: ["String"], 2: ["String", "String"] },
     },
     resolve: {
       fn: (inputs: any[]) =>
@@ -193,6 +209,77 @@ interface AsyncFunctionUserData {
   asyncFunction: (outcome: OperationOutcome, details: AsyncFunctionUserData) => Promise<void>;
   result?: any;
 }
+
+
+// --------------------------------------------------------------------------
+// The following section is the custom function for expand()
+// --------------------------------------------------------------------------
+interface ExpandUserData extends AsyncFunctionUserData {
+  value: any;
+  valueSet: string;
+  params?: string;
+}
+
+/**
+ * Create an Index Key for the expand function
+ * @param valueset
+ * @param params
+ * @returns
+ */
+function createIndexKeyExpand(valueSet: string, params?: string): string | undefined {
+  // input value is ignored since expand() is supposed to be called with a %terminologies fhirpath object
+
+  return params ? " terminologies - " + valueSet + " - " + params : "terminologies - " + valueSet;
+}
+
+
+/**
+ * Perform the actual async expand evaluation
+ * @param details parameters which is actually a ExpandUserData structure
+ */
+async function expandAsync(outcome: OperationOutcome, details: AsyncFunctionUserData): Promise<void> {
+  // perform the async call to check for the memberOf status
+  let typedData = details as ExpandUserData;
+
+  try {
+    const httpHeaders = {
+      "Accept": "application/fhir+json; charset=utf-8",
+    };
+    let myHeaders = new Headers(httpHeaders);
+
+    const requestUrl = "https://r4.ontoserver.csiro.au/fhir/ValueSet/$expand";
+
+    let response;
+
+    const additionalParams = typedData.params ?? ""
+    response = await fetch(`${requestUrl}?url=${typedData.valueSet}&${additionalParams}`, { headers: myHeaders });
+
+    if (response) {
+      const resultJson = await response.json();
+      let valueSet = resultJson as ValueSet;
+      if (valueSet.resourceType === "ValueSet") {
+        details.evaluationCompleted = true;
+        details.result = valueSet;
+      }
+
+      let outcomeResult = resultJson as OperationOutcome;
+      if (outcomeResult && outcomeResult.issue) {
+        details.evaluationCompleted = true;
+        throw outcomeResult; // should we be throwing here?
+      }
+    }
+  } catch (err) {
+    console.log(err);
+    if (err.resourceType === "OperationOutcome") {
+      throw err
+    }
+
+    details.evaluationCompleted = true;
+    const key = createIndexKeyExpand(typedData.valueSet, typedData.params);
+    throw CreateOperationOutcome("error", "exception", "Failed to check membership: " + key, undefined, err.message);
+  }
+}
+
 
 // --------------------------------------------------------------------------
 // The following section is the custom function for resolve()

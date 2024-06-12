@@ -5,20 +5,20 @@
       <v-card flat>
         <v-card-text>
           <v-textarea
-            :auto-grow="true"
-            :loading="evaluating"
-            v-model="expression"
-            label="Expression"
-            hide-details="auto"
-            rows="3"
+              :auto-grow="true"
+              :loading="evaluating"
+              v-model="expression"
+              label="Expression"
+              hide-details="auto"
+              rows="3"
           ></v-textarea>
           <v-btn @click="evaluateExpression">Evaluate</v-btn>
           <v-progress-circular class="pb" indeterminate v-if="evaluating"></v-progress-circular>
           <v-textarea
-            v-model="resourceJson"
-            label="Resource JSON"
-            hide-details="auto"
-            rows="10"
+              v-model="resourceJson"
+              label="Resource JSON"
+              hide-details="auto"
+              rows="10"
           />
 
           <div class="results" v-if="results.length > 0">
@@ -55,6 +55,7 @@
 .results {
   margin-top: 10px;
 }
+
 .issue {
   white-space: pre-wrap;
 }
@@ -74,40 +75,43 @@ const outcome = ref<OperationOutcome>({
   issue: [],
 });
 const resourceJson = ref(
-  JSON.stringify(
-    {
-      resourceType: "Patient",
-      name: [
+    JSON.stringify(
         {
-          given: ["John", "Doe"],
+          resourceType: "Patient",
+          name: [
+            {
+              given: ["John", "Doe"],
+            },
+          ],
+          birthDate: "1970-01-01",
+          managingOrganization: {
+            reference:
+                "https://sqlonfhir-r4.azurewebsites.net/fhir/Organization/example",
+          },
+          maritalStatus: {
+            coding: [
+              {
+                system: "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus",
+                code: "M",
+                display: "Married",
+              },
+              {
+                system: "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus",
+                code: "W",
+                display: "Widowed",
+              },
+            ],
+          },
         },
-      ],
-      birthDate: "1970-01-01",
-      managingOrganization: {
-        reference:
-          "https://sqlonfhir-r4.azurewebsites.net/fhir/Organization/example",
-      },
-      maritalStatus: {
-        coding: [
-          {
-            system: "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus",
-            code: "M",
-            display: "Married",
-          },
-          {
-            system: "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus",
-            code: "W",
-            display: "Widowed",
-          },
-        ],
-      },
-    },
-    null,
-    2
-  )
+        null,
+        2
+    )
 );
+// const expression = ref(
+//     "managingOrganization.resolve().select(name|alias)\n| maritalStatus.memberOf('http://hl7.org/fhir/ValueSet/observation-vitalsignresult')\n| maritalStatus.coding.memberOf('http://hl7.org/fhir/ValueSet/marital-status')\n| birthDate.expand('https://healthterminologies.gov.au/fhir/ValueSet/australian-states-territories-2')"
+// );
 const expression = ref(
-  "managingOrganization.resolve().select(name|alias)\n| maritalStatus.memberOf('http://hl7.org/fhir/ValueSet/observation-vitalsignresult')\n| maritalStatus.coding.memberOf('http://hl7.org/fhir/ValueSet/marital-status')\n| birthDate.toAge()"
+    "expand('https://healthterminologies.gov.au/fhir/ValueSet/australian-states-territories-2').expansion.contains"
 );
 
 // functions that mutate state and trigger updates
@@ -136,10 +140,10 @@ async function evaluateExpression() {
 
   try {
     let result = await evaluateFhirpathAsync(
-      fhirData,
-      expression.value,
-      context,
-      fhirpath_r4_model
+        fhirData,
+        expression.value,
+        context,
+        fhirpath_r4_model
     );
     console.log(result);
     results.value = result;

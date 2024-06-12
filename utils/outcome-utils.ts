@@ -55,7 +55,7 @@ export function CreateOperationOutcome(
 }
 
 export function logMessage(enabled: boolean, outcome: OperationOutcome, message: string, data?: any) {
-  if (enabled){
+  if (enabled) {
     console.log(message, data);
     // and append it into the outcome issues
     var issue: OperationOutcomeIssue = {
@@ -66,7 +66,7 @@ export function logMessage(enabled: boolean, outcome: OperationOutcome, message:
     outcome.issue.push(issue);
     if (typeof data === "string" || typeof data === "number" || typeof data === "boolean")
       issue.details!.text += "" + data;
-    if (data){
+    if (data) {
       if (typeof data === "string")
         issue.diagnostics = data;
       else
