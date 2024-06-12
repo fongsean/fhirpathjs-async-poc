@@ -82,6 +82,7 @@ const resourceJson = ref(
           given: ["John", "Doe"],
         },
       ],
+      birthDate: "1970-01-01",
       managingOrganization: {
         reference:
           "https://sqlonfhir-r4.azurewebsites.net/fhir/Organization/example",
@@ -106,7 +107,7 @@ const resourceJson = ref(
   )
 );
 const expression = ref(
-  "managingOrganization.resolve().select(name|alias)\n| maritalStatus.memberOf('http://hl7.org/fhir/ValueSet/observation-vitalsignresult')\n| maritalStatus.coding.memberOf('http://hl7.org/fhir/ValueSet/marital-status')"
+  "managingOrganization.resolve().select(name|alias)\n| maritalStatus.memberOf('http://hl7.org/fhir/ValueSet/observation-vitalsignresult')\n| maritalStatus.coding.memberOf('http://hl7.org/fhir/ValueSet/marital-status')\n| birthDate.toAge()"
 );
 
 // functions that mutate state and trigger updates

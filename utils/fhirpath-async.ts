@@ -1,6 +1,16 @@
-import type { CodeableConcept, Coding, OperationOutcome, OperationOutcomeIssue, Reference, Resource, Parameters } from "fhir/r4b";
+import type {
+  CodeableConcept,
+  Coding,
+  OperationOutcome,
+  OperationOutcomeIssue,
+  Reference,
+  Resource,
+  Parameters
+} from "fhir/r4b";
+import type { UserInvocationTable } from "fhirpath";
 import fhirpath from "fhirpath";
 import { logMessage, CreateOperationOutcome } from "~/utils/outcome-utils";
+import { birthdateToAge } from "~/utils/birthdate-to-age";
 
 // --------------------------------------------------------------------------
 // The concept of this POC is to demonstrate an approach to perform some
@@ -26,8 +36,8 @@ import { logMessage, CreateOperationOutcome } from "~/utils/outcome-utils";
 // --------------------------------------------------------------------------
 
 /** Global debug variable to permit the logger to write information messages
-    to the OperationOutcome and console
-*/
+ to the OperationOutcome and console
+ */
 export var debugAsyncFhirpath: boolean = true;
 
 /**
@@ -57,6 +67,25 @@ export async function evaluateFhirpathAsync(
   // https://github.com/HL7/fhirpath.js/?tab=readme-ov-file#user-defined-functions
   // https://github.com/HL7/fhirpath.js/blob/5428ef8be766301658215ef7ed241c8a1666a980/index.d.ts#L86
   const userInvocationTable: UserInvocationTable = {
+    toAge: {
+      fn: (inputs: any[]) =>
+        inputs.map((reference: string) => {
+          let key = createIndexKeyResolve(reference);
+          if (key) {
+            key = "Resolve:" + key;
+          }
+
+
+          const ageResult = birthdateToAge(reference);
+          logMessage(debugAsyncFhirpath, outcome, ' performing toAge(): ', key);
+          return ageResult
+
+
+          return undefined;
+        })
+          .filter((v) => v !== undefined),
+      arity: { 0: [] },
+    },
     resolve: {
       fn: (inputs: any[]) =>
         inputs.map((reference: string | Reference) => {
@@ -78,11 +107,11 @@ export async function evaluateFhirpathAsync(
           }
           return undefined;
         })
-        .filter((v) => v !== undefined),
+          .filter((v) => v !== undefined),
       arity: { 0: [] },
     },
     memberOf: {
-      fn: (inputs: any[], valueSet: string) => { 
+      fn: (inputs: any[], valueSet: string) => {
         let output = inputs.map((codeData: string | Coding | CodeableConcept) => {
           let key = createIndexKeyMemberOf(codeData, valueSet);
           if (key) {
@@ -103,7 +132,7 @@ export async function evaluateFhirpathAsync(
           }
           return undefined;
         })
-        .filter((v) => v !== undefined);
+          .filter((v) => v !== undefined);
         return output;
       },
       arity: { 1: ["String"] },
@@ -174,8 +203,8 @@ interface ResolveUserData extends AsyncFunctionUserData {
 
 /**
  * Create an Index Key for the memberOf function
- * @param value 
- * @returns 
+ * @param value
+ * @returns
  */
 function createIndexKeyResolve(value: string | Reference): string | undefined {
   if (typeof value === "string")
@@ -226,9 +255,9 @@ interface MemberOfUserData extends AsyncFunctionUserData {
 
 /**
  * Create an Index Key for the memberOf function
- * @param value 
- * @param valueset 
- * @returns 
+ * @param value
+ * @param valueset
+ * @returns
  */
 function createIndexKeyMemberOf(value: string | Coding | CodeableConcept, valueset: string): string | undefined {
   if (typeof value === "string") {
@@ -324,5 +353,5 @@ async function memberOfAsync(outcome: OperationOutcome, details: AsyncFunctionUs
     details.evaluationCompleted = true;
     const key = createIndexKeyMemberOf(typedData.value, typedData.valueSet);
     throw CreateOperationOutcome("error", "exception", "Failed to check membership: " + key, undefined, err.message);
-  }  
+  }
 }
